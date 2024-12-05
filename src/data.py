@@ -3,14 +3,14 @@ import sys
 
 def load_mnist_images(file_path):
     with open(file_path, 'rb') as f:
-        f.read(16)  # 16 byte header
+        f.read(16)  # 16-byte header
         data = np.frombuffer(f.read(), dtype=np.uint8)
-        images = data.reshape(-1, 28 * 28)  # unpack 28*28 image
+        images = data.reshape(-1, 28, 28, 1)  # Reshape to (N, 28, 28, 1)
         return images / 255.0  # Normalize to [0, 1]
 
 def load_mnist_labels(file_path):
     with open(file_path, 'rb') as f:
-        f.read(8)  # 8 byte header
+        f.read(8)  # 8-byte header
         labels = np.frombuffer(f.read(), dtype=np.uint8)
         return labels
 
