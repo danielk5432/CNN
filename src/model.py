@@ -1,128 +1,201 @@
 import numpy as np
 
-class CNN:
-    def __init__(self, conv_layers, fc_layers):
-        self.conv_layers = []
-        for kh, kw, in_channels, out_channels in conv_layers:
-            kernels = np.random.randn(out_channels, in_channels, kh, kw) * 0.1
-            biases = np.zeros(out_channels)
-            self.conv_layers.append((kernels, biases))
 
-        self.fc_weights = []
-        self.fc_biases = []
-        for i in range(1, len(fc_layers)):
-            if fc_layers[i - 1] is None:
-                self.fc_weights.append(None)  # Placeholder for input size to be determined later
-            else:
-                weight = np.random.randn(fc_layers[i - 1], fc_layers[i]) * 0.1
-                bias = np.zeros(fc_layers[i])
-                self.fc_weights.append(weight)
-                self.fc_biases.append(bias)
-
-    def initialize_fc_weights(self, input_size):
-        if self.fc_weights[0] is None:
-            self.fc_weights[0] = np.random.randn(input_size, self.fc_weights[1].shape[0]) * 0.1
-            self.fc_biases[0] = np.zeros(self.fc_weights[1].shape[0])
-
-    def relu(self, x):
-        return np.maximum(0, x)
-
-    def relu_grad(self, x):
-        return (x > 0).astype(np.float32)
-
-    def softmax(self, x):
-        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
-        return exp_x / np.sum(exp_x, axis=1, keepdims=True)
-
-    def conv2d(self, x, kernel, bias, stride=1, padding=0):
-        n, h, w, c = x.shape
-        out_channels, in_channels, kh, kw = kernel.shape
-        h_out = (h + 2 * padding - kh) // stride + 1
-        w_out = (w + 2 * padding - kw) // stride + 1
-
-        if padding > 0:
-            x = np.pad(x, ((0, 0), (padding, padding), (padding, padding), (0, 0)), mode='constant')
-
-        shape = (n, h_out, w_out, in_channels, kh, kw)
-        strides = (x.strides[0], stride * x.strides[1], stride * x.strides[2], x.strides[3], x.strides[1], x.strides[2])
-        sliding_windows = np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
-
-        conv = np.tensordot(sliding_windows, kernel, axes=([3, 4, 5], [1, 2, 3]))
-        return conv + bias.reshape((1, 1, 1, out_channels))
-
-    def conv2d_grad(self, dout, x, kernel, stride=1, padding=0):
-        n, h, w, c = x.shape
-        out_channels, in_channels, kh, kw = kernel.shape
-
-        if padding > 0:
-            x = np.pad(x, ((0, 0), (padding, padding), (padding, padding), (0, 0)), mode='constant')
-
-        dx = np.zeros_like(x)
-        dkernel = np.zeros_like(kernel)
-        dbias = np.sum(dout, axis=(0, 1, 2))
-
-        for i in range(h):
-            for j in range(w):
-                for b in range(n):
-                    h_start, h_end = i * stride, i * stride + kh
-                    w_start, w_end = j * stride, j * stride + kw
-                    dx[b, h_start:h_end, w_start:w_end, :] += np.sum(dout[b, i, j, :, None, None, None] * kernel, axis=0)
-                    dkernel += dout[b, i, j, :, None, None, None] * x[b, h_start:h_end, w_start:w_end, None, :, :, None]
-
-        if padding > 0:
-            dx = dx[:, padding:-padding, padding:-padding, :]
-        return dx, dkernel, dbias
-
-    def flatten(self, x):
-        return x.reshape(x.shape[0], -1)
+class Convolution:
+    def __init__(self, input_channels, output_channels, kernel_size, stride=1, padding=0):
+        self.input_channels = input_channels
+        self.output_channels = output_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.kernels = np.random.randn(output_channels, input_channels, kernel_size, kernel_size) * 0.1
+        self.biases = np.zeros(output_channels)
 
     def forward(self, x):
-        self.cache = {"conv": [], "fc": []}
-        for kernel, bias in self.conv_layers:
-            x = self.conv2d(x, kernel, bias, stride=1, padding=1)
-            self.cache["conv"].append((x, kernel, bias))
-            x = self.relu(x)
+        n, h, w, c = x.shape
+        print(f"Conv Input shape: {x.shape}")
 
-        x = self.flatten(x)
+        h_out = (h + 2 * self.padding - self.kernel_size) // self.stride + 1
+        w_out = (w + 2 * self.padding - self.kernel_size) // self.stride + 1
+
+        # Padding
+        if self.padding > 0:
+            x = np.pad(x, ((0, 0), (self.padding, self.padding), (self.padding, self.padding), (0, 0)), mode='constant')
+
+        # Sliding window
+        shape = (n, h_out, w_out, c, self.kernel_size, self.kernel_size)
+        strides = (x.strides[0], self.stride * x.strides[1], self.stride * x.strides[2], x.strides[3], x.strides[1], x.strides[2])
+        windows = np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
+
+        # Convolution
+        conv_out = np.tensordot(windows, self.kernels, axes=([3, 4, 5], [1, 2, 3])) + self.biases.reshape(1, 1, 1, -1)
+
+        print(f"Conv Output shape: {conv_out.shape}")
+        return conv_out
+
+    def backward(self, x, grad):
+        """
+        Backpropagation for the convolutional layer.
+        Args:
+            x: Input to the convolutional layer.
+            grad: Gradient from the next layer.
+        Returns:
+            grad_input: Gradient to pass to the previous layer.
+            dw: Gradient w.r.t kernels.
+            db: Gradient w.r.t biases.
+        """
+        n, h, w, c = x.shape
+        out_channels, in_channels, kh, kw = self.kernels.shape
+
+        # Initialize gradients
+        grad_input = np.zeros_like(x)
+        dw = np.zeros_like(self.kernels)
+        db = np.sum(grad, axis=(0, 1, 2))
+
+        # Padding for gradient computation
+        if self.padding > 0:
+            x = np.pad(x, ((0, 0), (self.padding, self.padding), (self.padding, self.padding), (0, 0)), mode='constant')
+            grad_input = np.pad(grad_input, ((0, 0), (self.padding, self.padding), (self.padding, self.padding), (0, 0)), mode='constant')
+
+        # Compute gradients using sliding window
+        for i in range(grad.shape[1]):
+            for j in range(grad.shape[2]):
+                window = x[:, i * self.stride:i * self.stride + kh, j * self.stride:j * self.stride + kw, :]
+                dw += np.tensordot(grad[:, i, j, :], window, axes=([0], [0]))
+                grad_input[:, i * self.stride:i * self.stride + kh, j * self.stride:j * self.stride + kw, :] += np.tensordot(grad[:, i, j, :], self.kernels, axes=([3], [0]))
+
+        # Remove padding from grad_input
+        if self.padding > 0:
+            grad_input = grad_input[:, self.padding:-self.padding, self.padding:-self.padding, :]
+
+        return grad_input, dw, db
+
+
+class MaxPooling:
+    def __init__(self, pool_size, stride):
+        self.pool_size = pool_size
+        self.stride = stride
+
+    def forward(self, x):
+        n, h, w, c = x.shape
+        print(f"MaxPool Input shape: {x.shape}")
+
+        h_out = (h - self.pool_size) // self.stride + 1
+        w_out = (w - self.pool_size) // self.stride + 1
+
+        shape = (n, h_out, w_out, c, self.pool_size, self.pool_size)
+        strides = (x.strides[0], self.stride * x.strides[1], self.stride * x.strides[2], x.strides[3], x.strides[1], x.strides[2])
+        windows = np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
+
+        max_out = np.max(windows, axis=(4, 5))
+
+        print(f"MaxPool Output shape: {max_out.shape}")
+        return max_out
+
+
+class FullyConnected:
+    def __init__(self, input_size, output_size):
+        self.weights = np.random.randn(input_size, output_size) * 0.1
+        self.biases = np.zeros(output_size)
+
+    def forward(self, x):
+        print(f"FullyConnected Input shape: {x.shape}")
+        output = x @ self.weights + self.biases
+        print(f"FullyConnected Output shape: {output.shape}")
+        return output
+    
+    def backward(self, x, grad):
+        """
+        Backpropagation for max pooling.
+        Args:
+            x: Input to the pooling layer.
+            grad: Gradient from the next layer.
+        Returns:
+            grad_input: Gradient to pass to the previous layer.
+        """
+        n, h, w, c = x.shape
+        grad_input = np.zeros_like(x)
+
+        pool_size = self.pool_size
+        for i in range(grad.shape[1]):
+            for j in range(grad.shape[2]):
+                window = x[:, i * self.stride:i * self.stride + pool_size, j * self.stride:j * self.stride + pool_size, :]
+                max_mask = (window == np.max(window, axis=(1, 2), keepdims=True))
+                grad_input[:, i * self.stride:i * self.stride + pool_size, j * self.stride:j * self.stride + pool_size, :] += grad[:, i, j, :][:, None, None, :] * max_mask
+        return grad_input
+
+class CNN:
+    def __init__(self):
+        # Define layers
+        self.conv1 = Convolution(input_channels=1, output_channels=8, kernel_size=3, stride=1, padding=1)
+        self.pool1 = MaxPooling(pool_size=2, stride=2)
+        self.conv2 = Convolution(input_channels=8, output_channels=16, kernel_size=3, stride=1, padding=1)
+        self.pool2 = MaxPooling(pool_size=2, stride=2)
+        self.fc1 = FullyConnected(input_size=7 * 7 * 16, output_size=100)
+        self.fc2 = FullyConnected(input_size=100, output_size=10)
+
+    def forward(self, x):
+        # Layer-wise forward pass
+        self.cache = {}  # To store intermediate outputs for backpropagation
+        x = self.conv1.forward(x)
+        x = np.maximum(0, x)  # ReLU
+        self.cache["relu1"] = x
+        x = self.pool1.forward(x)
+        self.cache["pool1"] = x
+        x = self.conv2.forward(x)
+        x = np.maximum(0, x)  # ReLU
+        self.cache["relu2"] = x
+        x = self.pool2.forward(x)
+        self.cache["pool2"] = x
+        x = x.reshape(x.shape[0], -1)  # Flatten
         self.cache["flatten"] = x
-
-        # Initialize fully connected weights dynamically
-        self.initialize_fc_weights(x.shape[1])
-
-        for i, (weight, bias) in enumerate(zip(self.fc_weights, self.fc_biases)):
-            self.cache["fc"].append((x, weight, bias))
-            x = x @ weight + bias
-            if i < len(self.fc_weights) - 1:  # Apply ReLU to all layers except the last one
-                x = self.relu(x)
-
+        x = self.fc1.forward(x)
+        self.cache["fc1"] = x
+        x = self.fc2.forward(x)
+        self.cache["fc2"] = x
         return self.softmax(x)
 
-
-
     def backward(self, x, y, learning_rate):
-        m = x.shape[0]
+        """
+        Backpropagation to update weights of all layers.
+        Args:
+            x: Input batch (N, 28, 28, 1)
+            y: One-hot encoded labels (N, 10)
+            learning_rate: Learning rate for gradient descent.
+        """
+        # Forward pass to get predictions and intermediate cache
         y_pred = self.forward(x)
-        loss_grad = (y_pred - y) / m
 
-        # Fully connected layers
-        for i in reversed(range(len(self.fc_weights))):
-            cached_x, weight, bias = self.cache["fc"][i]
-            dweight = cached_x.T @ loss_grad
-            dbias = np.sum(loss_grad, axis=0)
-            loss_grad = loss_grad @ weight.T * self.relu_grad(cached_x)
+        # Compute gradient of loss w.r.t softmax input
+        grad = y_pred - y  # Cross-entropy loss with softmax
 
-            self.fc_weights[i] -= learning_rate * dweight
-            self.fc_biases[i] -= learning_rate * dbias
+        # Backpropagate through FullyConnected Layer 2
+        grad, dw_fc2, db_fc2 = self.compute_fc_grad(self.cache["fc1"], self.fc2, grad)
+        self.fc2.weights -= learning_rate * dw_fc2
+        self.fc2.biases -= learning_rate * db_fc2
 
-        # Flatten
-        loss_grad = loss_grad.reshape(self.cache["flatten"].shape)
+        # Backpropagate through FullyConnected Layer 1
+        grad, dw_fc1, db_fc1 = self.compute_fc_grad(self.cache["flatten"], self.fc1, grad)
+        self.fc1.weights -= learning_rate * dw_fc1
+        self.fc1.biases -= learning_rate * db_fc1
 
-        # Convolutional layers
-        for i in reversed(range(len(self.conv_layers))):
-            cached_x, kernel, bias = self.cache["conv"][i]
-            loss_grad, dkernel, dbias = self.conv2d_grad(loss_grad, cached_x, kernel, stride=1, padding=1)
+        # Backpropagate through Pooling Layer 2
+        grad = self.pool2.backward(self.cache["relu2"], grad)
 
-            self.conv_layers[i] = (kernel - learning_rate * dkernel, bias - learning_rate * dbias)
+        # Backpropagate through Convolution Layer 2
+        grad = np.where(self.cache["relu2"] > 0, grad, 0)  # ReLU grad
+        grad, dw_conv2, db_conv2 = self.conv2.backward(self.cache["pool1"], grad)
+        self.conv2.kernels -= learning_rate * dw_conv2
+        self.conv2.biases -= learning_rate * db_conv2
+
+        # Backpropagate through Pooling Layer 1
+        grad = self.pool1.backward(self.cache["relu1"], grad)
+
+        # Backpropagate through Convolution Layer 1
+        grad = np.where(self.cache["relu1"] > 0, grad, 0)  # ReLU grad
+        grad, dw_conv1, db_conv1 = self.conv1.backward(x, grad)
+        self.conv1.kernels -= learning_rate * dw_conv1
+        self.conv1.biases -= learning_rate * db_conv1
 
     def train(self, x, y, epochs, batch_size, learning_rate):
         for epoch in range(epochs):
@@ -130,13 +203,38 @@ class CNN:
             np.random.shuffle(indices)
             x, y = x[indices], y[indices]
 
-            for start in range(0, x.shape[0], batch_size):
-                end = start + batch_size
-                batch_x, batch_y = x[start:end], y[start:end]
-                self.backward(batch_x, batch_y, learning_rate)
-            print(f"Epoch {epoch + 1} completed.")
+            for i in range(0, x.shape[0], batch_size):
+                batch_x = x[i:i + batch_size]
+                batch_y = y[i:i + batch_size]
+                y_pred = self.forward(batch_x)
+                loss = self.compute_loss(y_pred, batch_y)
+                print(f"Epoch {epoch + 1}, Batch {i // batch_size + 1}, Loss: {loss:.4f}")
 
-    def evaluate(self, x, y):
-        predictions = self.forward(x)
-        accuracy = np.mean(np.argmax(predictions, axis=1) == np.argmax(y, axis=1))
-        return accuracy
+                # Backpropagation not implemented in this snippet
+
+    @staticmethod
+    def compute_fc_grad(prev_activation, fc_layer, grad):
+        """
+        Computes gradients for a fully connected layer.
+        Args:
+            prev_activation: Input to the FC layer (N, D).
+            fc_layer: FullyConnected object.
+            grad: Gradient from the next layer (N, M).
+        Returns:
+            grad_input: Gradient to pass to the previous layer.
+            dw: Gradient w.r.t weights.
+            db: Gradient w.r.t biases.
+        """
+        dw = prev_activation.T @ grad
+        db = np.sum(grad, axis=0)
+        grad_input = grad @ fc_layer.weights.T
+        return grad_input, dw, db
+    
+    def softmax(x):
+        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+
+    def compute_loss(self, y_pred, y_true):
+        m = y_true.shape[0]
+        loss = -np.sum(y_true * np.log(y_pred + 1e-8)) / m
+        return loss

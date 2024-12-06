@@ -7,10 +7,7 @@ from data import load_data
 # Load and preprocess data
 train_images, train_labels, test_images, test_labels = load_data()
 
-
-conv_layers = [(3, 3, 1, 8), (3, 3, 8, 16)]  # 2 Conv layers: 1 input channel -> 8 filters -> 16 filters
-fc_layers = [None, 128, 10]  # Fully connected layers: 400 (flattened) -> 128 -> 10 classes
-model = CNN(conv_layers, fc_layers)
+model = CNN()
 
 model.train(train_images, train_labels, epochs=10, batch_size=64, learning_rate=0.01)
 
