@@ -1,6 +1,6 @@
 import numpy as np
 import sys
-from model import CNN
+from model_ import CNN
 from data import load_data
 
 if __name__ == "__main__":

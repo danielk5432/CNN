@@ -115,7 +115,7 @@ class CNN:
             indices = np.arange(x.shape[0])
             np.random.shuffle(indices)
             x, y = x[indices], y[indices]
-            print(x.shape, indices[0:10])
+            print(x.shape, batch_size)
             for i in range(0, x.shape[0], batch_size):
                 
                 x_batch = x[i:i+batch_size]
