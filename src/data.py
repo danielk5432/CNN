@@ -25,7 +25,7 @@ def load_data():
     test_images = load_mnist_images(sys.path[0] + '/../dataset/t10k-images.idx3-ubyte')
     test_labels = load_mnist_labels(sys.path[0] + '/../dataset/t10k-labels.idx1-ubyte')
     
-    train_labels = one_hot_encode(train_labels)
-    test_labels = one_hot_encode(test_labels)
+    #train_labels = one_hot_encode(train_labels)
+    #test_labels = one_hot_encode(test_labels)
 
     return train_images, train_labels, test_images, test_labels

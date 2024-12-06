@@ -1,8 +1,6 @@
 import numpy as np
-
-
-import numpy as np
-
+import pickle
+import sys
 
 def im2col(x, kernel_size, stride, padding):
     n, h, w, c = x.shape
@@ -21,23 +19,47 @@ def im2col(x, kernel_size, stride, padding):
 
 
 def col2im(cols, input_shape, kernel_size, stride, padding, h_out, w_out):
+    """
+    Converts column representation back to the original image tensor.
+
+    Args:
+        cols (numpy.ndarray): Columns matrix (flattened patches).
+        input_shape (tuple): Shape of the original input image (n, h, w, c).
+        kernel_size (int or tuple): Size of the convolution kernel (h_kernel, w_kernel).
+        stride (int): Stride of the convolution.
+        padding (int): Padding applied to the input.
+        h_out (int): Height of the output feature map.
+        w_out (int): Width of the output feature map.
+
+    Returns:
+        numpy.ndarray: Reconstructed image tensor of shape `input_shape`.
+    """
     n, h, w, c = input_shape
+    h_kernel, w_kernel = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
     h_padded, w_padded = h + 2 * padding, w + 2 * padding
+
+    # Initialize padded image tensor
     x_padded = np.zeros((n, h_padded, w_padded, c))
 
-    # Reshape columns back into sliding windows
-    cols_reshaped = cols.reshape(n, h_out, w_out, c, kernel_size, kernel_size)
+    # Reshape cols to match sliding window dimensions
+    cols_reshaped = cols.reshape(n, h_out, w_out, h_kernel, w_kernel, c)
 
-    print(f"col2im cols_reshaped: {cols_reshaped.shape}, x_padded: {x_padded.shape}")
-
+    # Loop over output dimensions to add contributions back to the padded image
     for i in range(h_out):
         for j in range(w_out):
-            x_padded[:, i * stride:i * stride + kernel_size, j * stride:j * stride + kernel_size, :] += cols_reshaped[:, i, j]
+            x_padded[
+                :, 
+                i * stride:i * stride + h_kernel, 
+                j * stride:j * stride + w_kernel, 
+                :
+            ] += cols_reshaped[:, i, j, :, :, :]
 
-    # Remove padding
+    # Remove padding if applicable
     if padding > 0:
         x_padded = x_padded[:, padding:-padding, padding:-padding, :]
+
     return x_padded
+
 
 
 class Convolution:
@@ -57,12 +79,12 @@ class Convolution:
             x, self.kernel_size, self.stride, self.padding
         )
 
-        print(f"forward Conv Input shape: {x.shape}, im2col shape: {self.x_cols.shape}")
+        #print(f"forward Conv Input shape: {x.shape}, im2col shape: {self.x_cols.shape}")
 
         kernels_reshaped = self.kernels.reshape(self.output_channels, -1)
         conv_out = self.x_cols @ kernels_reshaped.T + self.biases  # Matrix multiplication
 
-        print(f"forward Conv output shape: {conv_out.shape}")
+        #print(f"forward Conv output shape: {conv_out.shape}")
 
         return conv_out.reshape(self.input_shape[0], self.h_out, self.w_out, self.output_channels)
 
@@ -72,7 +94,7 @@ class Convolution:
         # Gradients for biases
         db = np.sum(grad, axis=(0, 1, 2))
         
-        print(f"backward convolution input shape: {grad.shape}, x_cols shape: {self.x_cols.shape}")
+        #print(f"backward convolution input shape: {grad.shape}, x_cols shape: {self.x_cols.shape}")
 
         # Gradients for kernels
         grad_reshaped = grad.transpose(0, 3, 1, 2).reshape(-1, self.output_channels)  # (N, H_out, W_out, C_out) -> (N*H_out*W_out, C_out)
@@ -83,7 +105,7 @@ class Convolution:
         # Gradients for input
         kernels_reshaped = self.kernels.reshape(self.output_channels, -1)
         grad_input_cols = grad_reshaped @ kernels_reshaped
-        print(f"grad_input_cols shape: {grad_input_cols.shape}, x_cols shape: {self.x_cols.shape}")
+        #print(f"grad_input_cols shape: {grad_input_cols.shape}, x_cols shape: {self.x_cols.shape}")
         grad_input = col2im(
             grad_input_cols, self.input_shape, self.kernel_size, self.stride, self.padding, self.h_out, self.w_out
         )
@@ -100,7 +122,7 @@ class MaxPooling:
 
     def forward(self, x):
         n, h, w, c = x.shape
-        print(f"MaxPool Input shape: {x.shape}")
+        #print(f"MaxPool Input shape: {x.shape}")
 
         # Calculate output dimensions
         h_out = (h - self.pool_size) // self.stride + 1
@@ -125,7 +147,7 @@ class MaxPooling:
         self.x_shape = x.shape
 
         max_out = np.max(windows, axis=(4, 5))
-        print(f"MaxPool Output shape: {max_out.shape}")
+        #print(f"MaxPool Output shape: {max_out.shape}")
         return max_out
 
 
@@ -137,7 +159,7 @@ class MaxPooling:
         grad = grad.reshape(n, h_out, w_out, c)
         
         grad_input = np.zeros(self.x_shape)  # 원래 입력 크기와 같은 배열 생성
-        print(f"backward MaxPooling input shape: {grad.shape}, window shape {windows.shape}, x shape: {self.x_shape}")
+        #print(f"backward MaxPooling input shape: {grad.shape}, window shape {windows.shape}, x shape: {self.x_shape}")
 
         # 각 윈도우 내 최대값 위치 마스크
         max_mask = (windows == np.max(windows, axis=(4, 5), keepdims=True))
@@ -153,7 +175,7 @@ class MaxPooling:
                         i * self.stride:i * self.stride + h_out, 
                         j * self.stride:j * self.stride + w_out, :] += grad_distributed[:, :, :, :, i, j]
 
-        print(f"backward MaxPooling output shape: {grad_input.shape}")
+        #print(f"backward MaxPooling output shape: {grad_input.shape}")
 
         return grad_input
 
@@ -164,9 +186,9 @@ class FullyConnected:
         self.biases = np.zeros(output_size)
 
     def forward(self, x):
-        print(f"FullyConnected Input shape: {x.shape}")
+        #print(f"FullyConnected Input shape: {x.shape}")
         output = x @ self.weights + self.biases
-        print(f"FullyConnected Output shape: {output.shape}")
+        #print(f"FullyConnected Output shape: {output.shape}")
         return output
     
     def backward(self, x, grad):
@@ -180,7 +202,7 @@ class FullyConnected:
         """
         n, h, w, c = x.shape
         grad_input = np.zeros_like(x)
-        print(f"backward FullyConnected Input shape: {x.shape}")
+        #print(f"backward FullyConnected Input shape: {x.shape}")
 
         pool_size = self.pool_size
         for i in range(grad.shape[1]):
@@ -188,7 +210,7 @@ class FullyConnected:
                 window = x[:, i * self.stride:i * self.stride + pool_size, j * self.stride:j * self.stride + pool_size, :]
                 max_mask = (window == np.max(window, axis=(1, 2), keepdims=True))
                 grad_input[:, i * self.stride:i * self.stride + pool_size, j * self.stride:j * self.stride + pool_size, :] += grad[:, i, j, :][:, None, None, :] * max_mask
-        print(f"backward FullyConnected Input shape: {grad_input.shape}")
+        #print(f"backward FullyConnected Input shape: {grad_input.shape}")
 
         return grad_input
 
@@ -230,13 +252,13 @@ class CNN:
         grad = y_pred - y  # Cross-entropy loss with softmax
 
         # Backpropagate through FullyConnected Layer 2
-        print(f"backward FullyConnected2 Input shape: {grad.shape}")
+        #print(f"backward FullyConnected2 Input shape: {grad.shape}")
         grad, dw_fc2, db_fc2 = self.compute_fc_grad(self.cache["fc1"], self.fc2, grad)
         self.fc2.weights -= learning_rate * dw_fc2
         self.fc2.biases -= learning_rate * db_fc2
 
         # Backpropagate through FullyConnected Layer 1
-        print(f"backward FullyConnected1 Input shape: {grad.shape}")
+        #print(f"backward FullyConnected1 Input shape: {grad.shape}")
         grad, dw_fc1, db_fc1 = self.compute_fc_grad(self.cache["flatten"], self.fc1, grad)
         self.fc1.weights -= learning_rate * dw_fc1
         self.fc1.biases -= learning_rate * db_fc1
@@ -255,7 +277,7 @@ class CNN:
 
         # Backpropagate through Convolution Layer 1
         grad = np.where(self.cache["relu1"] > 0, grad, 0)  # ReLU grad
-        grad, dw_conv1, db_conv1 = self.conv1.backward(x, grad)
+        grad, dw_conv1, db_conv1 = self.conv1.backward(grad)
         self.conv1.kernels -= learning_rate * dw_conv1
         self.conv1.biases -= learning_rate * db_conv1
 
@@ -265,17 +287,51 @@ class CNN:
             indices = np.arange(x.shape[0])
             np.random.shuffle(indices)
             x, y = x[indices], y[indices]
-
+            
             for i in range(0, x.shape[0], batch_size):
                 batch_x = x[i:i + batch_size]
                 batch_y = y[i:i + batch_size]
-                print(f"Epoch {epoch + 1}, Batch {i // batch_size + 1}")
                 y_pred = self.forward(batch_x)
                 loss = self.compute_loss(y_pred, batch_y)
-                print(f"\nEpoch {epoch + 1} forward complete, Loss: {loss:.4f}")
 
                 # Backpropagation
                 self.backward(batch_x, batch_y, learning_rate, y_pred)
+            print(f"Epoch {epoch + 1} , Loss: {loss:.4f}")
+
+    def evaluate(self, x, y):
+        y_pred = self.forward(x)
+        y_pred_classes = np.argmax(y_pred, axis=1)
+        y_true_classes = np.argmax(y, axis=1)
+        accuracy = np.mean(y_pred_classes == y_true_classes)
+        return accuracy
+
+    def save_model(self, filepath):
+        model_data = {
+            "conv1_kernels": self.conv1.kernels,
+            "conv1_biases": self.conv1.biases,
+            "conv2_kernels": self.conv2.kernels,
+            "conv2_biases": self.conv2.biases,
+            "fc1_weights": self.fc1.weights,
+            "fc1_biases": self.fc1.biases,
+            "fc2_weights": self.fc2.weights,
+            "fc2_biases": self.fc2.biases
+        }
+        with open(filepath, 'wb') as f:
+            np.save(f, model_data)
+        print(f"Model saved to {filepath}")
+
+    def load_model(self, filepath):
+        with open(filepath, 'rb') as f:
+            model_data = np.load(f, allow_pickle=True).item()
+        self.conv1.kernels = model_data["conv1_kernels"]
+        self.conv1.biases = model_data["conv1_biases"]
+        self.conv2.kernels = model_data["conv2_kernels"]
+        self.conv2.biases = model_data["conv2_biases"]
+        self.fc1.weights = model_data["fc1_weights"]
+        self.fc1.biases = model_data["fc1_biases"]
+        self.fc2.weights = model_data["fc2_weights"]
+        self.fc2.biases = model_data["fc2_biases"]
+        print(f"Model loaded from {filepath}")
 
     @staticmethod
     def compute_fc_grad(prev_activation, fc_layer, grad):
