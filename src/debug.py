@@ -12,7 +12,7 @@ conv_layers = [(3, 3, 1, 8), (3, 3, 8, 16)]  # 2 Conv layers: 1 input channel ->
 fc_layers = [400, 128, 10]  # Fully connected layers: 400 (flattened) -> 128 -> 10 classes
 model = CNN(conv_layers, fc_layers)
 
-model.train(train_images, train_labels, epochs=400, batch_size=64, learning_rate=0.2)
+model.train(train_images, train_labels, epochs=10, batch_size=64, learning_rate=0.01)
 
 # Evaluate model
 save_path = sys.path[0] + "/../ckpt/ckpt.pkl"
